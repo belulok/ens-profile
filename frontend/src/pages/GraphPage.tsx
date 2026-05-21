@@ -275,21 +275,25 @@ export default function GraphPage() {
     [firstPick, textureLoader],
   );
 
-  // Cinematic camera intro + force tuning so nodes actually spread out.
-  // d3-force defaults cluster small graphs uncomfortably tight; bump the
-  // link distance and node repulsion so a 4-node graph fills the frame.
+  // Force tuning: spread small graphs without flinging them out of view.
+  // Camera framing happens in onEngineStop (below) so the camera lands on
+  // the *settled* positions, not a mid-explosion snapshot.
   useEffect(() => {
     if (!graphData || !fgRef.current) return;
     const fg = fgRef.current;
-
-    fg.d3Force("link")?.distance(70);
-    fg.d3Force("charge")?.strength(-260);
+    fg.d3Force("link")?.distance(45);
+    fg.d3Force("charge")?.strength(-120);
     fg.d3ReheatSimulation();
-
-    fg.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 0);
-    const t = setTimeout(() => fg.zoomToFit(1400, 20), 80);
-    return () => clearTimeout(t);
   }, [graphData]);
+
+  const hasFramedRef = useRef(false);
+  useEffect(() => { hasFramedRef.current = false; }, [graphData]);
+
+  const handleEngineStop = useCallback(() => {
+    if (!fgRef.current || hasFramedRef.current) return;
+    hasFramedRef.current = true;
+    fgRef.current.zoomToFit(800, 35);
+  }, []);
 
   const modeHint = {
     view: "Click a node to open its profile. Drag empty space to orbit.",
@@ -402,10 +406,11 @@ export default function GraphPage() {
               linkOpacity={0.85}
               onNodeClick={onNodeClick}
               onLinkClick={onLinkClick}
-              cooldownTicks={200}
-              warmupTicks={40}
-              d3AlphaDecay={0.02}
-              d3VelocityDecay={0.3}
+              onEngineStop={handleEngineStop}
+              cooldownTicks={150}
+              warmupTicks={30}
+              d3AlphaDecay={0.03}
+              d3VelocityDecay={0.4}
               enableNodeDrag={true}
               showNavInfo={false}
             />
