@@ -61,6 +61,52 @@ export default function GraphPage() {
   const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
   const textureCache = useRef<Map<string, THREE.Texture>>(new Map());
 
+  // --- Sequential reveal -------------------------------------------------
+  // Nodes appear one by one, then edges draw between them. All elements live
+  // in the simulation from the start (so positions settle while invisible);
+  // we just gate rendering via nodeVisibility / linkVisibility.
+  const [revealCount, setRevealCount] = useState(0);
+
+  const revealOrder = useMemo(() => {
+    if (!graphData) return { nodes: [] as string[], links: [] as string[] };
+    const nodes = graphData.nodes
+      .map((n) => n.id)
+      .sort((a, b) => a.localeCompare(b));
+    const links = graphData.links
+      .map((l) => canonicalLinkKey(l))
+      .sort((a, b) => a.localeCompare(b));
+    return { nodes, links };
+  }, [graphData]);
+
+  const totalSteps = revealOrder.nodes.length + revealOrder.links.length;
+
+  useEffect(() => {
+    setRevealCount(0);
+    if (totalSteps === 0) return;
+    let i = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      i += 1;
+      setRevealCount(i);
+      if (i < totalSteps) {
+        // Slower for nodes, quicker for the link chase that follows.
+        const delay = i < revealOrder.nodes.length ? 220 : 110;
+        timer = setTimeout(tick, delay);
+      }
+    };
+    timer = setTimeout(tick, 220);
+    return () => { if (timer) clearTimeout(timer); };
+  }, [revealOrder, totalSteps]);
+
+  const revealedNodes = useMemo(
+    () => new Set(revealOrder.nodes.slice(0, Math.min(revealCount, revealOrder.nodes.length))),
+    [revealCount, revealOrder.nodes],
+  );
+  const revealedLinks = useMemo(() => {
+    const linkStep = Math.max(0, revealCount - revealOrder.nodes.length);
+    return new Set(revealOrder.links.slice(0, linkStep));
+  }, [revealCount, revealOrder]);
+
   // Track container size so the canvas fills width correctly
   useEffect(() => {
     function updateSize() {
@@ -183,13 +229,12 @@ export default function GraphPage() {
     [mode, removeMutation],
   );
 
-  // Custom 3D node: sphere with avatar texture + sprite label above
+  // Custom 3D node: small sphere with avatar texture + sprite label above
   const nodeThreeObject = useCallback(
     (node: NodeObject) => {
       const n = node as FGNode;
       const group = new THREE.Group();
 
-      // Sphere
       let texture = n.avatar ? textureCache.current.get(n.avatar) : undefined;
       if (n.avatar && !texture) {
         texture = textureLoader.load(n.avatar);
@@ -200,22 +245,20 @@ export default function GraphPage() {
         roughness: 0.35,
         metalness: 0.05,
         emissive: new THREE.Color(firstPick === n.id ? 0x3b82f6 : 0x000000),
-        emissiveIntensity: firstPick === n.id ? 0.4 : 0,
+        emissiveIntensity: firstPick === n.id ? 0.45 : 0,
       });
-      const sphere = new THREE.Mesh(new THREE.SphereGeometry(6, 32, 32), sphereMat);
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(3.5, 32, 32), sphereMat);
       group.add(sphere);
 
-      // Glow halo
       const haloMat = new THREE.MeshBasicMaterial({
         color: firstPick === n.id ? 0x3b82f6 : n.resolved ? 0x71717a : 0x3f3f46,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.16,
         side: THREE.BackSide,
       });
-      const halo = new THREE.Mesh(new THREE.SphereGeometry(7.5, 24, 24), haloMat);
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(4.4, 24, 24), haloMat);
       group.add(halo);
 
-      // Label sprite (always faces camera)
       const label = new SpriteText(n.label);
       label.color = "#e4e4e7";
       label.backgroundColor = "rgba(9, 9, 11, 0.85)";
@@ -223,8 +266,8 @@ export default function GraphPage() {
       label.borderRadius = 2;
       label.fontFace = "Inter, system-ui, sans-serif";
       label.fontWeight = "500";
-      label.textHeight = 2.5;
-      label.position.set(0, 9, 0);
+      label.textHeight = 1.8;
+      label.position.set(0, 5.5, 0);
       group.add(label);
 
       return group;
@@ -348,13 +391,11 @@ export default function GraphPage() {
               backgroundColor="#09090b"
               nodeThreeObject={nodeThreeObject}
               nodeThreeObjectExtend={false}
-              linkColor={() => "#52525b"}
-              linkWidth={0.5}
-              linkOpacity={0.6}
-              linkDirectionalParticles={3}
-              linkDirectionalParticleWidth={1.2}
-              linkDirectionalParticleColor={() => "#a1a1aa"}
-              linkDirectionalParticleSpeed={0.006}
+              nodeVisibility={(n) => revealedNodes.has((n as FGNode).id)}
+              linkVisibility={(l) => revealedLinks.has(canonicalLinkKey(l as FGLink))}
+              linkColor={() => "#71717a"}
+              linkWidth={0.8}
+              linkOpacity={0.85}
               onNodeClick={onNodeClick}
               onLinkClick={onLinkClick}
               cooldownTicks={200}
@@ -410,9 +451,22 @@ function BuildingIndicator() {
 }
 
 function linkMatches(link: FGLink, a: string, b: string): boolean {
-  const src = typeof link.source === "object" ? (link.source as FGNode).id : (link.source as string);
-  const tgt = typeof link.target === "object" ? (link.target as FGNode).id : (link.target as string);
+  const src = endpointId(link.source);
+  const tgt = endpointId(link.target);
   return (src === a && tgt === b) || (src === b && tgt === a);
+}
+
+// Order-independent stable id for a link. Works whether source/target are
+// raw name strings (before the simulation starts) or full node objects
+// (after force-graph swaps them).
+function canonicalLinkKey(link: FGLink): string {
+  const a = endpointId(link.source);
+  const b = endpointId(link.target);
+  return a < b ? `${a}--${b}` : `${b}--${a}`;
+}
+
+function endpointId(ref: string | FGNode): string {
+  return typeof ref === "object" ? ref.id : ref;
 }
 
 // Tiny grey checkerboard used while real avatars are still loading.
