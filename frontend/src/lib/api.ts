@@ -63,11 +63,23 @@ class ApiError extends Error {
   }
 }
 
+async function ensureCsrfCookie(): Promise<void> {
+  if (getCsrfToken()) return;
+  await fetch("/api/csrf/", { credentials: "same-origin" });
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
   const isMutation = init.method && !["GET", "HEAD"].includes(init.method);
+  if (isMutation) {
+    // Django requires a valid CSRF token on POST/PUT/PATCH/DELETE. The SPA
+    // serves no Django-rendered template, so the cookie is not set until
+    // we explicitly fetch it.
+    await ensureCsrfCookie();
+  }
+
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(init.headers as Record<string, string>),
