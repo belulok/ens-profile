@@ -281,12 +281,14 @@ export default function GraphPage() {
     [firstPick, textureLoader],
   );
 
-  // Place the camera at the final close distance immediately — no zoom-in
-  // animation. The server has already pre-spread the nodes via spring_layout,
-  // so the framing is correct from frame 1.
+  // Place the camera at a close distance immediately — no zoom-in animation.
+  // Distance scales with node count so a 4-node graph fills the frame while
+  // a 50-node graph still has room to breathe. Tuned empirically.
   useEffect(() => {
     if (!graphData || !fgRef.current) return;
-    fgRef.current.cameraPosition({ x: 0, y: 0, z: 220 }, { x: 0, y: 0, z: 0 }, 0);
+    const n = graphData.nodes.length;
+    const z = Math.max(130, Math.sqrt(n) * 38 + 70);
+    fgRef.current.cameraPosition({ x: 0, y: 0, z }, { x: 0, y: 0, z: 0 }, 0);
   }, [graphData]);
 
   const modeHint = {
