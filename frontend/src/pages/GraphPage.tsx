@@ -107,12 +107,13 @@ export default function GraphPage() {
     return new Set(revealOrder.links.slice(0, linkStep));
   }, [revealCount, revealOrder]);
 
-  // Track container size so the canvas fills width correctly
+  // Track container size so the canvas fills the responsive height
+  // (460px on mobile, 600px on sm+) and the available width on resize.
   useEffect(() => {
     function updateSize() {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      setContainerSize({ width: rect.width, height: 600 });
+      setContainerSize({ width: rect.width, height: rect.height });
     }
     updateSize();
     window.addEventListener("resize", updateSize);
@@ -368,25 +369,31 @@ export default function GraphPage() {
 
       {graphData && graphData.nodes.length > 0 && (
         <div className="rounded-md border border-zinc-800 bg-zinc-950 overflow-hidden">
-          <div className="px-4 py-2 border-b border-zinc-800 flex items-center gap-1 text-sm flex-wrap">
-            <span className="text-zinc-500 text-xs mr-2">Mode:</span>
-            {(["view", "connect", "delete"] as Mode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setModeAndReset(m)}
-                className={clsx(
-                  "px-3 py-1 rounded-md text-xs transition-colors",
-                  mode === m
-                    ? "bg-white text-zinc-950 font-medium"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-900",
-                )}
-              >
-                {m === "view" ? "View" : m === "connect" ? "Add edge" : "Delete edge"}
-              </button>
-            ))}
-            <span className="text-xs text-zinc-500 ml-auto">{modeHint}</span>
+          <div className="px-3 sm:px-4 py-2 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-zinc-500 text-xs mr-1 sm:mr-2">Mode:</span>
+              {(["view", "connect", "delete"] as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setModeAndReset(m)}
+                  className={clsx(
+                    "px-3 py-1 rounded-md text-xs transition-colors",
+                    mode === m
+                      ? "bg-white text-zinc-950 font-medium"
+                      : "text-zinc-400 hover:text-white hover:bg-zinc-900",
+                  )}
+                >
+                  {m === "view" ? "View" : m === "connect" ? "Add edge" : "Delete edge"}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-zinc-500 sm:ml-auto sm:text-right">{modeHint}</span>
           </div>
-          <div ref={containerRef} style={{ height: 600, position: "relative" }}>
+          <div
+            ref={containerRef}
+            className="h-[460px] sm:h-[600px]"
+            style={{ position: "relative" }}
+          >
             <ForceGraph3D
               ref={fgRef}
               graphData={graphData}
@@ -411,12 +418,13 @@ export default function GraphPage() {
               showNavInfo={false}
             />
           </div>
-          <div className="px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between">
-            <span>
+          <div className="px-3 sm:px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between gap-2">
+            <span className="whitespace-nowrap">
               {graphData.nodes.length} node{graphData.nodes.length === 1 ? "" : "s"} ·{" "}
               {graphData.links.length} edge{graphData.links.length === 1 ? "" : "s"}
             </span>
-            <span className="text-zinc-600">Drag to orbit · Scroll to zoom · Drag a node to reposition</span>
+            <span className="text-zinc-600 hidden sm:inline">Drag to orbit · Scroll to zoom · Drag a node to reposition</span>
+            <span className="text-zinc-600 sm:hidden">Pinch · drag · tap</span>
           </div>
         </div>
       )}
