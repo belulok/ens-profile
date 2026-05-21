@@ -1,11 +1,20 @@
-import { useEffect, useRef, useState, useCallback, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  type FormEvent,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import ForceGraph2D, {
+import ForceGraph3D, {
   type ForceGraphMethods,
   type LinkObject,
   type NodeObject,
-} from "react-force-graph-2d";
+} from "react-force-graph-3d";
+import * as THREE from "three";
+import SpriteText from "three-spritetext";
 import clsx from "clsx";
 
 import { api } from "../lib/api";
@@ -33,6 +42,8 @@ type FGLink = LinkObject & {
 
 type Toast = { id: number; kind: "info" | "error"; message: string };
 
+const PLACEHOLDER_DATA_URI = createPlaceholderTexture();
+
 export default function GraphPage() {
   const navigate = useNavigate();
   const [pairs, setPairs] = useState("");
@@ -43,9 +54,24 @@ export default function GraphPage() {
   const [malformed, setMalformed] = useState<string[]>([]);
   const [unresolved, setUnresolved] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(true);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 
   const fgRef = useRef<ForceGraphMethods<FGNode, FGLink> | undefined>(undefined);
-  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  const textureLoader = useMemo(() => new THREE.TextureLoader(), []);
+  const textureCache = useRef<Map<string, THREE.Texture>>(new Map());
+
+  // Track container size so the canvas fills width correctly
+  useEffect(() => {
+    function updateSize() {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      setContainerSize({ width: rect.width, height: 600 });
+    }
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    return () => window.removeEventListener("resize", updateSize);
+  }, [graphData]);
 
   const buildMutation = useMutation({
     mutationFn: (raw: string) => api.buildGraph(raw),
@@ -56,8 +82,6 @@ export default function GraphPage() {
         avatar: n.data.avatar,
         resolved: n.data.resolved,
         address: n.data.address,
-        x: n.position.x,
-        y: n.position.y,
       }));
       const links: FGLink[] = resp.edges.map((e) => ({
         source: e.data.source,
@@ -67,7 +91,6 @@ export default function GraphPage() {
       setMalformed(resp.malformed);
       setUnresolved(resp.unresolved);
       setShowForm(false);
-      preloadAvatars(resp.nodes.map((n) => ({ id: n.data.id, url: n.data.avatar })), imageCache.current);
     },
     onError: (err) => pushToast({ kind: "error", message: `Build failed: ${(err as Error).message}` }),
   });
@@ -160,63 +183,69 @@ export default function GraphPage() {
     [mode, removeMutation],
   );
 
-  const nodeCanvasObject = useCallback(
-    (node: NodeObject, ctx: CanvasRenderingContext2D, globalScale: number) => {
+  // Custom 3D node: sphere with avatar texture + sprite label above
+  const nodeThreeObject = useCallback(
+    (node: NodeObject) => {
       const n = node as FGNode;
-      const x = n.x ?? 0;
-      const y = n.y ?? 0;
-      const r = 14;
+      const group = new THREE.Group();
 
-      // Avatar disc, or placeholder
-      const img = imageCache.current.get(n.id);
-      if (img && img.complete && img.naturalWidth > 0) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.closePath();
-        ctx.clip();
-        ctx.drawImage(img, x - r, y - r, r * 2, r * 2);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = "#27272a";
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#71717a";
-        ctx.font = `${r}px Inter, system-ui`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(n.label[0]?.toUpperCase() ?? "?", x, y);
+      // Sphere
+      let texture = n.avatar ? textureCache.current.get(n.avatar) : undefined;
+      if (n.avatar && !texture) {
+        texture = textureLoader.load(n.avatar);
+        textureCache.current.set(n.avatar, texture);
       }
+      const sphereMat = new THREE.MeshStandardMaterial({
+        map: texture ?? textureLoader.load(PLACEHOLDER_DATA_URI),
+        roughness: 0.35,
+        metalness: 0.05,
+        emissive: new THREE.Color(firstPick === n.id ? 0x3b82f6 : 0x000000),
+        emissiveIntensity: firstPick === n.id ? 0.4 : 0,
+      });
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(6, 32, 32), sphereMat);
+      group.add(sphere);
 
-      // Border (highlight first-pick when in connect mode)
-      ctx.strokeStyle =
-        firstPick === n.id ? "#3b82f6" : n.resolved ? "#71717a" : "#3f3f46";
-      ctx.lineWidth = firstPick === n.id ? 3 : 1.5;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.stroke();
+      // Glow halo
+      const haloMat = new THREE.MeshBasicMaterial({
+        color: firstPick === n.id ? 0x3b82f6 : n.resolved ? 0x71717a : 0x3f3f46,
+        transparent: true,
+        opacity: 0.18,
+        side: THREE.BackSide,
+      });
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(7.5, 24, 24), haloMat);
+      group.add(halo);
 
-      // Label
-      const fontSize = Math.max(10, 12 / globalScale);
-      ctx.font = `${fontSize}px Inter, system-ui`;
-      ctx.fillStyle = "#e4e4e7";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillText(n.label, x, y + r + 4);
+      // Label sprite (always faces camera)
+      const label = new SpriteText(n.label);
+      label.color = "#e4e4e7";
+      label.backgroundColor = "rgba(9, 9, 11, 0.85)";
+      label.padding = 2;
+      label.borderRadius = 2;
+      label.fontFace = "Inter, system-ui, sans-serif";
+      label.fontWeight = "500";
+      label.textHeight = 2.5;
+      label.position.set(0, 9, 0);
+      group.add(label);
+
+      return group;
     },
-    [firstPick],
+    [firstPick, textureLoader],
   );
 
-  // Recenter after data changes
+  // Cinematic camera intro: pan from far to graph
   useEffect(() => {
-    if (graphData && fgRef.current) {
-      setTimeout(() => fgRef.current?.zoomToFit(400, 60), 60);
-    }
+    if (!graphData || !fgRef.current) return;
+    const fg = fgRef.current;
+    // Start far away, then zoom to fit
+    fg.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 0);
+    const t = setTimeout(() => {
+      fg.zoomToFit(1400, 80);
+    }, 50);
+    return () => clearTimeout(t);
   }, [graphData]);
 
   const modeHint = {
-    view: "Click a node to open its profile.",
+    view: "Click a node to open its profile. Drag empty space to orbit.",
     connect: firstPick ? `Click another node to connect with ${firstPick}.` : "Click two nodes to create an edge.",
     delete: "Click an edge to remove it.",
   }[mode];
@@ -227,7 +256,7 @@ export default function GraphPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Social graph</h1>
         <p className="mt-1 text-zinc-400 text-sm max-w-2xl">
           Paste ENS name pairs to visualize their connections. Submitted pairs persist
-          as friendships. Use the toolbar to add or remove edges directly.
+          as friendships. Drag in empty space to orbit, scroll to zoom.
         </p>
       </header>
 
@@ -287,7 +316,6 @@ export default function GraphPage() {
             {unresolved.length} name{unresolved.length === 1 ? "" : "s"} did not resolve:
           </strong>{" "}
           <code className="font-mono text-xs">{unresolved.join(", ")}</code>
-          <span className="block mt-1 text-xs text-zinc-600">These appear as faded nodes.</span>
         </div>
       )}
 
@@ -311,27 +339,30 @@ export default function GraphPage() {
             ))}
             <span className="text-xs text-zinc-500 ml-auto">{modeHint}</span>
           </div>
-          <div style={{ height: 600 }}>
-            <ForceGraph2D
+          <div ref={containerRef} style={{ height: 600, position: "relative" }}>
+            <ForceGraph3D
               ref={fgRef}
               graphData={graphData}
-              nodeCanvasObject={nodeCanvasObject}
-              nodePointerAreaPaint={(node, color, ctx) => {
-                const n = node as FGNode;
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(n.x ?? 0, n.y ?? 0, 16, 0, Math.PI * 2);
-                ctx.fill();
-              }}
-              linkColor={() => "#3f3f46"}
-              linkWidth={() => 1.5}
-              linkHoverPrecision={6}
+              width={containerSize.width}
+              height={containerSize.height}
+              backgroundColor="#09090b"
+              nodeThreeObject={nodeThreeObject}
+              nodeThreeObjectExtend={false}
+              linkColor={() => "#52525b"}
+              linkWidth={0.5}
+              linkOpacity={0.6}
+              linkDirectionalParticles={3}
+              linkDirectionalParticleWidth={1.2}
+              linkDirectionalParticleColor={() => "#a1a1aa"}
+              linkDirectionalParticleSpeed={0.006}
               onNodeClick={onNodeClick}
               onLinkClick={onLinkClick}
-              cooldownTicks={120}
-              backgroundColor="#09090b"
-              width={undefined}
-              height={undefined}
+              cooldownTicks={200}
+              warmupTicks={40}
+              d3AlphaDecay={0.02}
+              d3VelocityDecay={0.3}
+              enableNodeDrag={true}
+              showNavInfo={false}
             />
           </div>
           <div className="px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between">
@@ -339,7 +370,7 @@ export default function GraphPage() {
               {graphData.nodes.length} node{graphData.nodes.length === 1 ? "" : "s"} ·{" "}
               {graphData.links.length} edge{graphData.links.length === 1 ? "" : "s"}
             </span>
-            <span className="text-zinc-600">Drag nodes · Scroll to zoom</span>
+            <span className="text-zinc-600">Drag to orbit · Scroll to zoom · Drag a node to reposition</span>
           </div>
         </div>
       )}
@@ -350,13 +381,12 @@ export default function GraphPage() {
         </p>
       )}
 
-      {/* Toasts */}
       <div className="fixed bottom-6 right-6 space-y-2 z-50">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={clsx(
-              "border rounded-md px-4 py-3 text-sm shadow-lg max-w-sm",
+              "border rounded-md px-4 py-3 text-sm shadow-lg max-w-sm animate-in",
               t.kind === "error"
                 ? "bg-red-950 border-red-800 text-red-200"
                 : "bg-zinc-900 border-zinc-700 text-zinc-100",
@@ -385,15 +415,15 @@ function linkMatches(link: FGLink, a: string, b: string): boolean {
   return (src === a && tgt === b) || (src === b && tgt === a);
 }
 
-function preloadAvatars(
-  items: { id: string; url: string }[],
-  cache: Map<string, HTMLImageElement>,
-): void {
-  for (const { id, url } of items) {
-    if (!url || cache.has(id)) continue;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = url;
-    cache.set(id, img);
-  }
+// Tiny grey checkerboard used while real avatars are still loading.
+function createPlaceholderTexture(): string {
+  return (
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">
+        <rect width="64" height="64" fill="#27272a"/>
+        <circle cx="32" cy="32" r="20" fill="#3f3f46"/>
+      </svg>`,
+    )
+  );
 }
