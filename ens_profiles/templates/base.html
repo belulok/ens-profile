@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ENS Profiles{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <header class="border-b border-zinc-800">
+    <div class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+      <a href="{% url 'search' %}" class="font-semibold text-lg tracking-tight">
+        ens<span class="text-zinc-500">.</span>profiles
+      </a>
+      {% block header_actions %}
+        <form action="{% url 'search' %}" method="post" class="hidden sm:flex items-center gap-2">
+          {% csrf_token %}
+          <input
+            type="text"
+            name="ens_name"
+            placeholder="vitalik.eth"
+            class="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-sm w-48 focus:outline-none focus:border-zinc-600"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+          />
+          <button type="submit" class="text-sm text-zinc-400 hover:text-white">Lookup</button>
+        </form>
+      {% endblock %}
+    </div>
+  </header>
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="loading-overlay" class="hidden fixed inset-0 bg-zinc-950/85 backdrop-blur-sm z-50 flex items-center justify-center">
+    <div class="flex flex-col items-center gap-4">
+      <div class="w-10 h-10 border-2 border-zinc-700 border-t-white rounded-full animate-spin"></div>
+      <p class="text-sm text-zinc-400">Reading from Ethereum…</p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const overlay = document.getElementById('loading-overlay');
+      let timer;
+      const show = () => { timer = setTimeout(() => overlay.classList.remove('hidden'), 150); };
+      const hide = () => { clearTimeout(timer); overlay.classList.add('hidden'); };
+
+      document.querySelectorAll('form').forEach(f => f.addEventListener('submit', show));
+      document.querySelectorAll('a[href^="/"]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (href === '/' || href.startsWith('//')) return;
+        a.addEventListener('click', show);
+      });
+      window.addEventListener('pageshow', hide);
+    })();
+  </script>
+</body>
+</html>
