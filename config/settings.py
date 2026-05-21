@@ -17,8 +17,51 @@ CSRF_TRUSTED_ORIGINS = [
     h.strip() for h in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if h.strip()
 ]
 
-if os.environ.get("USE_X_FORWARDED_PROTO", "False").lower() in ("1", "true", "yes"):
+_BEHIND_HTTPS_PROXY = os.environ.get("USE_X_FORWARDED_PROTO", "False").lower() in ("1", "true", "yes")
+if _BEHIND_HTTPS_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# --- Security headers --------------------------------------------------------
+SECURE_CONTENT_TYPE_NOSNIFF = True       # X-Content-Type-Options: nosniff
+SECURE_REFERRER_POLICY = "same-origin"   # Referrer-Policy
+X_FRAME_OPTIONS = "DENY"                 # X-Frame-Options
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# CSRF cookie kept JS-readable; needed for fetch-based mutations in step 3.
+CSRF_COOKIE_HTTPONLY = False
+
+if _BEHIND_HTTPS_PROXY:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30   # 30 days — bump to 1 year once stable
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False    # don't poison the parent zone
+    SECURE_HSTS_PRELOAD = False
+
+# --- Logging -----------------------------------------------------------------
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "[{asctime}] {levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "loggers": {
+        "ens_profiles": {
+            "handlers": ["console"],
+            "level": os.environ.get("ENS_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}
 
 INSTALLED_APPS = [
     "django.contrib.admin",

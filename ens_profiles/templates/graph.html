@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Social Graph — ENS Profiles{% endblock %}
+{% block header_actions %}{% endblock %}
+{% block main_class %}max-w-6xl mx-auto px-4 py-8{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Social graph</h1>
+  <p class="mt-1 text-zinc-400 text-sm">
+    Paste ENS name pairs (one per line) to visualize their connections.
+    Each node is clickable and routes to its profile page.
+  </p>
+</section>
+
+<details {% if not submitted %}open{% endif %} class="mb-6 group">
+  <summary class="cursor-pointer text-sm text-zinc-400 hover:text-white select-none mb-3">
+    {% if submitted %}Edit input ({{ node_count }} nodes, {{ edge_count }} edges){% else %}Input pairs{% endif %}
+  </summary>
+  <form method="post" class="space-y-3">
+    {% csrf_token %}
+    <textarea
+      name="pairs"
+      rows="8"
+      placeholder="vitalik.eth, nick.eth&#10;nick.eth, ens.eth&#10;..."
+      class="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-zinc-600"
+      spellcheck="false"
+      autocapitalize="off"
+    >{{ raw_pairs }}</textarea>
+    <div class="flex items-center gap-2">
+      <button type="submit" class="bg-white text-zinc-950 font-medium px-4 py-2 rounded-md hover:bg-zinc-200 text-sm">
+        Build graph
+      </button>
+      <button
+        type="button"
+        onclick="document.querySelector('textarea[name=pairs]').value = '{{ sample_pairs|escapejs }}';"
+        class="text-sm text-zinc-400 hover:text-white px-3 py-2"
+      >
+        Load sample
+      </button>
+      <span class="text-xs text-zinc-600 ml-2">
+        One pair per line. Separators: comma, tab, or space.
+      </span>
+    </div>
+  </form>
+</details>
+
+{% if submitted %}
+  {% if malformed %}
+    <div class="mb-4 p-3 rounded-md bg-amber-950/30 border border-amber-900 text-amber-300 text-sm">
+      <strong>Skipped {{ malformed|length }} malformed line{{ malformed|length|pluralize }}:</strong>
+      <code class="font-mono text-xs">{{ malformed|join:" · " }}</code>
+    </div>
+  {% endif %}
+  {% if unresolved %}
+    <div class="mb-4 p-3 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 text-sm">
+      <strong class="text-zinc-300">{{ unresolved|length }} name{{ unresolved|length|pluralize }} did not resolve:</strong>
+      <code class="font-mono text-xs">{{ unresolved|join:", " }}</code>
+      <span class="block mt-1 text-xs text-zinc-600">These appear as faded nodes in the graph.</span>
+    </div>
+  {% endif %}
+
+  {% if node_count > 0 %}
+    <div class="rounded-md border border-zinc-800 bg-zinc-950 overflow-hidden">
+      <div id="cy" style="width: 100%; height: 600px;"></div>
+      <div class="px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between">
+        <span>{{ node_count }} node{{ node_count|pluralize }} · {{ edge_count }} edge{{ edge_count|pluralize }}</span>
+        <span>Click a node to open its profile · Drag to rearrange · Scroll to zoom</span>
+      </div>
+    </div>
+  {% else %}
+    <p class="text-zinc-500 text-sm">No valid pairs found.</p>
+  {% endif %}
+
+  {{ graph_data|json_script:"graph-data" }}
+  <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <script>
+    (function () {
+      const graphData = JSON.parse(document.getElementById('graph-data').textContent);
+      if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+
+      const cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: [...graphData.nodes, ...graphData.edges],
+        layout: { name: 'preset' },
+        minZoom: 0.3,
+        maxZoom: 3,
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'label': 'data(label)',
+              'background-color': '#27272a',
+              'background-image': 'data(avatar)',
+              'background-fit': 'cover',
+              'background-clip': 'node',
+              'border-color': '#52525b',
+              'border-width': 2,
+              'width': 48,
+              'height': 48,
+              'color': '#e4e4e7',
+              'font-size': 11,
+              'font-family': 'Inter, system-ui, sans-serif',
+              'text-valign': 'bottom',
+              'text-margin-y': 6,
+              'text-background-color': '#09090b',
+              'text-background-opacity': 0.85,
+              'text-background-padding': 3,
+              'text-background-shape': 'roundrectangle',
+            }
+          },
+          {
+            selector: 'node[?resolved]',
+            style: {
+              'border-color': '#71717a',
+            }
+          },
+          {
+            selector: 'node:selected',
+            style: {
+              'border-color': '#ffffff',
+              'border-width': 3,
+            }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'width': 1.5,
+              'line-color': '#3f3f46',
+              'curve-style': 'bezier',
+              'target-arrow-shape': 'none',
+            }
+          },
+          {
+            selector: 'edge:selected',
+            style: {
+              'line-color': '#a1a1aa',
+              'width': 2.5,
+            }
+          },
+        ],
+      });
+
+      cy.on('tap', 'node', (evt) => {
+        const id = evt.target.data('id');
+        const resolved = evt.target.data('resolved');
+        if (resolved) {
+          window.location.href = '/' + encodeURIComponent(id) + '/';
+        }
+      });
+
+      cy.on('mouseover', 'node', (evt) => {
+        evt.target.style('border-color', '#ffffff');
+      });
+      cy.on('mouseout', 'node', (evt) => {
+        const resolved = evt.target.data('resolved');
+        evt.target.removeStyle('border-color');
+      });
+
+      // Fit the graph nicely
+      cy.ready(() => cy.fit(undefined, 40));
+    })();
+  </script>
+{% endif %}
+
+{% endblock %}

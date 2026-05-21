@@ -15,9 +15,15 @@
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
   <header class="border-b border-zinc-800">
     <div class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-      <a href="{% url 'search' %}" class="font-semibold text-lg tracking-tight">
-        ens<span class="text-zinc-500">.</span>profiles
-      </a>
+      <div class="flex items-center gap-6">
+        <a href="{% url 'search' %}" class="font-semibold text-lg tracking-tight">
+          ens<span class="text-zinc-500">.</span>profiles
+        </a>
+        <nav class="flex items-center gap-4 text-sm">
+          <a href="{% url 'search' %}" class="text-zinc-400 hover:text-white">Lookup</a>
+          <a href="{% url 'graph' %}" class="text-zinc-400 hover:text-white">Graph</a>
+        </nav>
+      </div>
       {% block header_actions %}
         <form action="{% url 'search' %}" method="post" class="hidden sm:flex items-center gap-2">
           {% csrf_token %}
@@ -35,7 +41,7 @@
       {% endblock %}
     </div>
   </header>
-  <main class="max-w-3xl mx-auto px-4 py-8">
+  <main class="{% block main_class %}max-w-3xl mx-auto px-4 py-8{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 
