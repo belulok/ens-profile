@@ -41,7 +41,7 @@ export default function HomePage() {
 
         <form
           onSubmit={onSubmit}
-          className="mt-10 sm:mt-12 flex flex-col sm:flex-row gap-2 max-w-lg mx-auto"
+          className="mt-10 sm:mt-12 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-2 max-w-lg mx-auto"
         >
           <input
             type="text"
@@ -59,7 +59,7 @@ export default function HomePage() {
           />
           <button
             type="submit"
-            className="bg-white text-zinc-950 font-medium px-6 py-3 rounded-md hover:bg-zinc-200 transition-colors whitespace-nowrap"
+            className="self-center sm:self-auto bg-white text-zinc-950 font-medium text-sm sm:text-base px-7 py-2 sm:px-6 sm:py-3 rounded-full sm:rounded-md hover:bg-zinc-200 transition-colors whitespace-nowrap"
           >
             Look up
           </button>
