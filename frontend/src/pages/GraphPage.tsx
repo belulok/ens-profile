@@ -122,12 +122,18 @@ export default function GraphPage() {
   const buildMutation = useMutation({
     mutationFn: (raw: string) => api.buildGraph(raw),
     onSuccess: (resp) => {
-      const nodes: FGNode[] = resp.nodes.map((n) => ({
+      // Seed nodes with the server's spring_layout positions (scaled into
+      // a camera-friendly range) so they appear already spread out, with
+      // a small Z jitter for 3D depth.
+      const nodes: FGNode[] = resp.nodes.map((n, i) => ({
         id: n.data.id,
         label: n.data.label,
         avatar: n.data.avatar,
         resolved: n.data.resolved,
         address: n.data.address,
+        x: n.position.x * 0.35,
+        y: n.position.y * 0.35,
+        z: ((i % 5) - 2) * 12,
       }));
       const links: FGLink[] = resp.edges.map((e) => ({
         source: e.data.source,
@@ -275,17 +281,13 @@ export default function GraphPage() {
     [firstPick, textureLoader],
   );
 
-  // Frame the camera on the settled layout. Doing it here (rather than at a
-  // fixed-time setTimeout) avoids the camera locking onto a mid-simulation
-  // snapshot. Guarded so we only zoom once per graph load.
-  const hasFramedRef = useRef(false);
-  useEffect(() => { hasFramedRef.current = false; }, [graphData]);
-
-  const handleEngineStop = useCallback(() => {
-    if (!fgRef.current || hasFramedRef.current) return;
-    hasFramedRef.current = true;
-    fgRef.current.zoomToFit(800, 40);
-  }, []);
+  // Place the camera at the final close distance immediately — no zoom-in
+  // animation. The server has already pre-spread the nodes via spring_layout,
+  // so the framing is correct from frame 1.
+  useEffect(() => {
+    if (!graphData || !fgRef.current) return;
+    fgRef.current.cameraPosition({ x: 0, y: 0, z: 220 }, { x: 0, y: 0, z: 0 }, 0);
+  }, [graphData]);
 
   const modeHint = {
     view: "Click a node to open its profile. Drag empty space to orbit.",
@@ -391,6 +393,7 @@ export default function GraphPage() {
               backgroundColor="#09090b"
               nodeThreeObject={nodeThreeObject}
               nodeThreeObjectExtend={false}
+              nodeRelSize={10}
               nodeVisibility={(n) => revealedNodes.has((n as FGNode).id)}
               linkVisibility={(l) => revealedLinks.has(canonicalLinkKey(l as FGLink))}
               linkColor={() => "#71717a"}
@@ -398,11 +401,10 @@ export default function GraphPage() {
               linkOpacity={0.85}
               onNodeClick={onNodeClick}
               onLinkClick={onLinkClick}
-              onEngineStop={handleEngineStop}
-              cooldownTicks={150}
-              warmupTicks={30}
-              d3AlphaDecay={0.03}
-              d3VelocityDecay={0.4}
+              cooldownTicks={120}
+              warmupTicks={20}
+              d3AlphaDecay={0.035}
+              d3VelocityDecay={0.45}
               enableNodeDrag={true}
               showNavInfo={false}
             />
