@@ -1,8 +1,24 @@
-import json
+"""JSON API + SPA shell.
 
-from django.http import HttpResponseNotAllowed, JsonResponse
-from django.shortcuts import redirect, render
-from django.views.decorators.http import require_http_methods
+All routes return JSON except the catch-all, which serves the React build's
+index.html so React Router can take over client-side routing. Django no
+longer renders any HTML templates on `main` — see number-one/two/three for
+the all-Django version.
+"""
+
+import json
+import logging
+
+from dataclasses import asdict
+from django.conf import settings
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseNotAllowed,
+    JsonResponse,
+)
+from django.middleware.csrf import get_token
+from django.views.decorators.http import require_http_methods, require_GET
 
 from .services.avatar import normalize_avatar
 from .services.ens import ENSNotFound, get_or_resolve, is_valid_ens_name
@@ -11,7 +27,17 @@ from .services.friendships import (
     add_friendship,
     remove_friendship,
 )
-from .services.graph import SAMPLE_PAIRS, build_graph
+from .services.graph import build_graph
+
+logger = logging.getLogger(__name__)
+
+
+# ---------- helpers ----------------------------------------------------------
+
+def _no_store(response):
+    """Mutation responses must not be cached."""
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 def _record_groups(records: dict) -> dict:
@@ -31,74 +57,72 @@ def _record_groups(records: dict) -> dict:
     }
 
 
-def search(request):
-    if request.method == "POST":
-        name = (request.POST.get("ens_name") or "").strip().lower()
-        if is_valid_ens_name(name):
-            return redirect("profile", ens_name=name)
-    return render(request, "search.html")
+# ---------- API endpoints ----------------------------------------------------
+
+@require_GET
+def api_csrf(request):
+    """GET-only endpoint that primes the csrftoken cookie for SPA clients."""
+    get_token(request)  # ensures Vary: Cookie + sets cookie on response
+    return _no_store(JsonResponse({"ok": True}))
 
 
-def profile(request, ens_name: str):
+@require_GET
+def api_profile(request, ens_name: str):
     ens_name = ens_name.strip().lower()
-
     if not is_valid_ens_name(ens_name):
-        return render(request, "not_found.html", {"ens_name": ens_name}, status=404)
-
+        return JsonResponse({"error": "invalid ENS name"}, status=404)
     try:
-        profile_obj = get_or_resolve(ens_name)
+        profile = get_or_resolve(ens_name)
     except ENSNotFound:
-        return render(request, "not_found.html", {"ens_name": ens_name}, status=404)
+        return JsonResponse({"error": "ENS name not found"}, status=404)
 
-    return render(
-        request,
-        "profile.html",
-        {
-            "profile": profile_obj,
-            "avatar": normalize_avatar(profile_obj.records.get("avatar")),
-            "groups": _record_groups(profile_obj.records),
-        },
-    )
-
-
-def graph(request):
-    raw_pairs = ""
-    graph_data: dict = {"nodes": [], "edges": []}
-    unresolved: list[str] = []
-    malformed: list[str] = []
-    node_count = 0
-    edge_count = 0
-
-    if request.method == "POST":
-        raw_pairs = request.POST.get("pairs", "")
-        # Step 3: typed pairs persist as friendships; DB friendships among
-        # the visible names are merged in via build_graph's `extra_pairs`.
-        result, malformed = build_graph(raw_pairs, persist_pairs=True, merge_db_friendships=True)
-        graph_data = result.to_dict()
-        unresolved = result.unresolved
-        node_count = len(result.nodes)
-        edge_count = len(result.edges)
-
-    return render(
-        request,
-        "graph.html",
-        {
-            "raw_pairs": raw_pairs,
-            "sample_pairs": SAMPLE_PAIRS,
-            "graph_data": graph_data,
-            "unresolved": unresolved,
-            "malformed": malformed,
-            "node_count": node_count,
-            "edge_count": edge_count,
-            "submitted": request.method == "POST",
-        },
-    )
+    avatar = normalize_avatar(profile.records.get("avatar"))
+    return JsonResponse({
+        "ens_name": profile.ens_name,
+        "address": profile.address,
+        "reverse_verified": profile.reverse_verified,
+        "records": profile.records,
+        "avatar": asdict(avatar),
+        "groups": _record_groups(profile.records),
+        "resolved_at": profile.resolved_at.isoformat(),
+    })
 
 
-def _no_store(response):
-    """Mark API responses as uncacheable — mutation responses must not be cached."""
-    response["Cache-Control"] = "no-store"
-    return response
+@require_http_methods(["POST"])
+def api_graph(request):
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+
+    pairs = payload.get("pairs", "")
+    if not isinstance(pairs, str):
+        return JsonResponse({"error": "'pairs' must be a string"}, status=400)
+
+    result, malformed = build_graph(pairs, persist_pairs=True, merge_db_friendships=True)
+    return _no_store(JsonResponse({
+        "nodes": [
+            {
+                "data": {
+                    "id": n.id,
+                    "label": n.label,
+                    "address": n.address,
+                    "avatar": n.avatar_url,
+                    "resolved": n.resolved,
+                },
+                "position": {"x": n.x, "y": n.y},
+            }
+            for n in result.nodes
+        ],
+        "edges": [
+            {"data": {"source": e.source, "target": e.target, "id": f"{e.source}--{e.target}"}}
+            for e in result.edges
+        ],
+        "unresolved": result.unresolved,
+        "malformed": malformed,
+        "node_count": len(result.nodes),
+        "edge_count": len(result.edges),
+    }))
 
 
 @require_http_methods(["POST", "DELETE"])
@@ -125,3 +149,23 @@ def api_friendships(request):
         return _no_store(JsonResponse({"deleted": deleted}))
     except FriendshipError as exc:
         return _no_store(JsonResponse({"error": str(exc)}, status=400))
+
+
+# ---------- SPA shell --------------------------------------------------------
+
+def spa_index(request):
+    """Serve the React build's index.html for any non-API path.
+
+    React Router handles client-side routing from there. If the build hasn't
+    been produced yet, return a clear 503 with instructions instead of a
+    cryptic stack trace.
+    """
+    path = settings.SPA_INDEX_PATH
+    try:
+        return HttpResponse(path.read_bytes(), content_type="text/html; charset=utf-8")
+    except FileNotFoundError:
+        return HttpResponse(
+            "Frontend build is missing. Run: cd frontend && npm ci && npm run build",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )

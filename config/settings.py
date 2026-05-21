@@ -127,9 +127,16 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Pick up the React build output so WhiteNoise serves /static/assets/* etc.
+# Only added when the build exists — keeps `runserver` happy on a fresh clone.
+_frontend_dist = BASE_DIR / "frontend" / "dist"
+STATICFILES_DIRS = [_frontend_dist] if _frontend_dist.is_dir() else []
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# Path the SPA fallback view reads index.html from.
+SPA_INDEX_PATH = _frontend_dist / "index.html"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

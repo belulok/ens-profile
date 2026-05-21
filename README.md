@@ -1,8 +1,9 @@
 # ENS Profiles
 
-Three-step Django app:
+Three-step ENS toolkit. On `main`, a **React + Three.js** SPA fronts a **Django + Postgres** JSON API. The `number-one/two/three` branches preserve the all-Django version of each milestone.
+
 1. Look up any `.eth` profile and render every on-chain field
-2. Visualize a social graph of ENS names with networkx + Cytoscape.js
+2. Visualize a social graph of ENS names (networkx + force-directed canvas)
 3. Edit edges in the browser; persist as friendships in Postgres
 
 **Live demo**: <https://sebastian.hackathn.xyz>
@@ -10,42 +11,73 @@ Three-step Django app:
 ## Run locally
 
 ```bash
+# Backend
 python3.11+ -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py test ens_profiles.tests   # 55 tests
+
+# Frontend (main branch only)
+cd frontend && npm ci && npm run build && cd ..
+
+# Serve
 python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000>. Try `vitalik.eth`, `/graph/` with the sample button.
+Open <http://127.0.0.1:8000>. The home page renders the Three.js particle wave; `/graph` is the editor.
+
+For frontend hot-reload during dev: `cd frontend && npm run dev` (Vite at :5173, proxies `/api/*` to Django at :8000).
 
 ## Routes
 
+**SPA (served by the React build)**
+
+| Path | Purpose |
+|---|---|
+| `/` | Home — Three.js hero + search box |
+| `/:name` | Profile page for an ENS name |
+| `/graph` | Social graph + edge editor |
+
+**JSON API (Django)**
+
 | Path | Method | Purpose |
 |---|---|---|
-| `/` | GET / POST | Search box; POST redirects to profile |
-| `/<ens_name>/` | GET | Profile page — address, avatar, every populated text record |
-| `/graph/` | GET / POST | Social graph; textarea pairs are persisted as friendships |
-| `/api/friendships/` | POST | Create a friendship `{a, b}` — 201 created / 200 idempotent |
-| `/api/friendships/` | DELETE | Remove a friendship `{a, b}` — `{deleted: 0\|1}` |
+| `/api/csrf/` | GET | Prime the csrftoken cookie for SPA clients |
+| `/api/profile/<name>/` | GET | Resolve name → JSON of address, avatar, records, groups |
+| `/api/graph/` | POST | Build a graph from `{pairs: string}`; returns nodes/edges/positions |
+| `/api/friendships/` | POST | Create friendship `{a, b}` — 201/200 |
+| `/api/friendships/` | DELETE | Remove friendship `{a, b}` — `{deleted}` |
 
-API mutations require Django's CSRF token (X-CSRFToken header). Mutations are rate-limited at the nginx layer (30 req/min/IP with burst of 10).
+API mutations require Django's CSRF token (`X-CSRFToken` header). Mutations are rate-limited at the nginx layer (30 req/min/IP, burst 10).
 
 ## Architecture
 
 ```
-ens_profiles/
+frontend/                     # React 18 + TS + Vite (main branch only)
+├── src/
+│   ├── components/
+│   │   ├── Layout.tsx        # header + outlet
+│   │   └── ParticleWave.tsx  # @react-three/fiber wave (home only)
+│   ├── pages/
+│   │   ├── HomePage.tsx
+│   │   ├── ProfilePage.tsx   # TanStack Query → /api/profile/
+│   │   ├── GraphPage.tsx     # react-force-graph-2d + edge editing
+│   │   └── NotFoundPage.tsx
+│   └── lib/
+│       ├── api.ts            # fetch + CSRF wrapper
+│       └── validation.ts     # client-side .eth-only mirror
+
+ens_profiles/                 # Django app (JSON API on main)
 ├── services/
-│   ├── ens.py          # web3.py + parallel text-record fetch; get_or_resolve() cache
-│   ├── avatar.py       # ENSIP-12 URI normalization (https / ipfs / data / nft)
-│   ├── graph.py        # parse_pairs + networkx spring_layout + Cytoscape elements
-│   └── friendships.py  # canonical pair ordering + add/remove/list helpers
-├── models.py           # Profile (cache), Friendship (undirected, canonical pair)
-├── views.py            # search / profile / graph / api_friendships
+│   ├── ens.py                # web3.py + parallel text-record fetch; get_or_resolve() cache
+│   ├── avatar.py             # ENSIP-12 URI normalization (https / ipfs / data / nft)
+│   ├── graph.py              # parse_pairs + networkx spring_layout
+│   └── friendships.py        # canonical pair ordering + add/remove/list
+├── models.py                 # Profile (cache), Friendship (undirected, canonical)
+├── views.py                  # JSON endpoints + SPA shell
 ├── urls.py
-├── tests/              # 55 tests (validation, avatar, parsing, grouping, friendships, API)
-└── templates/          # base, search, profile, graph, not_found
+└── tests/                    # 55 tests
 ```
 
 ## Configuration
@@ -66,25 +98,24 @@ ens_profiles/
 
 ## Security posture
 
-- `is_valid_ens_name()` restricts URL/input to `^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\.eth$`
-- Graph JSON embedded with `{% json_script %}` (no `\|safe` on user input)
-- CSRF middleware enforces a token on every state-changing request
+- `is_valid_ens_name()` restricts URL/input to `^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\.eth$` on **both** sides
+- API responses set `Cache-Control: no-store`; mutations require CSRF token
 - HSTS, Referrer-Policy, X-Content-Type-Options, X-Frame-Options, SameSite/Secure cookies (when behind HTTPS)
 - nginx `limit_req` zone for `/api/`
 - Postgres role is least-privilege (owns only the app DB; no superuser)
 
 ## Branches
 
-- `main` — latest
-- `number-one` — step 1 milestone (profile lookup only)
-- `number-two` — step 1 + step 2 + the audit pass
-- `number-three` — all three steps
+- `main` — React + Three.js SPA + Django JSON API
+- `number-one` — step 1 only, all-Django templates
+- `number-two` — step 1 + 2, all-Django templates + audit pass
+- `number-three` — all three steps, all-Django templates
 
-To demo a given stage on the server: `ssh splash && cd ~/ens-profiles && git checkout <branch> && sudo systemctl restart ens-profiles`.
+**Demo switcher** (on the server): `ssh splash && cd ~/ens-profiles && git checkout <branch> && ./deploy.sh` — `deploy.sh` detects whether `frontend/` exists and builds React if so; otherwise just runs the Django side.
 
 ## Out of scope (next steps)
 
-- **Authentication on edge mutations** — anyone can currently add/delete edges. The natural next step is wallet-signed mutations (sign-in-with-ethereum) so an edge can only be added/removed by an endpoint owner.
-- **NFT avatar resolution** — would require fetching tokenURI + verifying NFT ownership; falls back to initials today.
-- **ENS multi-coin addresses** (BTC/LTC/etc.) and contenthash decoding for IPFS site links.
-- **Non-`.eth` TLDs** via CCIP-Read off-chain resolvers (`*.cb.id`, etc.).
+- **Auth on edge mutations** — anyone can currently add/delete. Next: sign-in-with-ethereum for wallet-scoped writes.
+- **NFT avatar resolution** — requires tokenURI fetch + ownership verification; falls back to initials today.
+- **ENS multi-coin addresses** + contenthash decoding.
+- **Non-`.eth` TLDs** via CCIP-Read.
