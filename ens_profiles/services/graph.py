@@ -16,6 +16,7 @@ import networkx as nx
 
 from .avatar import normalize_avatar
 from .ens import ENSNotFound, get_or_resolve, is_valid_ens_name
+from .friendships import bulk_add_friendships, friendships_among
 
 logger = logging.getLogger(__name__)
 
@@ -106,13 +107,32 @@ def _resolve_one(name: str) -> tuple[str, object]:
         return name, None
 
 
-def build_graph(raw_pairs: str) -> tuple[GraphResult, list[str]]:
-    """Top-level entrypoint. Returns (GraphResult, malformed_lines)."""
+def build_graph(
+    raw_pairs: str,
+    persist_pairs: bool = False,
+    merge_db_friendships: bool = False,
+) -> tuple[GraphResult, list[str]]:
+    """Top-level entrypoint. Returns (GraphResult, malformed_lines).
+
+    Args:
+        raw_pairs: textarea contents — one "a.eth, b.eth" pair per line.
+        persist_pairs: if True, save each typed pair as a Friendship row.
+        merge_db_friendships: if True, also add edges from the DB for any
+            pair where both endpoints appear in the typed input.
+    """
     pairs, malformed = parse_pairs(raw_pairs)
     unique_names = sorted({n for pair in pairs for n in pair})
 
     if not unique_names:
         return GraphResult(nodes=[], edges=[], unresolved=[]), malformed
+
+    if persist_pairs and pairs:
+        bulk_add_friendships(pairs)
+
+    edge_set: set[tuple[str, str]] = {tuple(sorted([a, b])) for a, b in pairs if a != b}
+    if merge_db_friendships:
+        for a, b in friendships_among(unique_names):
+            edge_set.add((a, b))
 
     workers = min(NAME_RESOLUTION_WORKERS, len(unique_names))
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -121,9 +141,8 @@ def build_graph(raw_pairs: str) -> tuple[GraphResult, list[str]]:
     g = nx.Graph()
     for name in unique_names:
         g.add_node(name)
-    for a, b in pairs:
-        if a != b:
-            g.add_edge(a, b)
+    for a, b in edge_set:
+        g.add_edge(a, b)
 
     # Spring layout (deterministic via seed for stable positions across reloads).
     k = LAYOUT_K_FACTOR / max(1, len(unique_names) ** 0.5)
@@ -152,7 +171,7 @@ def build_graph(raw_pairs: str) -> tuple[GraphResult, list[str]]:
             y=float(y) * LAYOUT_SCALE,
         ))
 
-    edges = [GraphEdge(source=a, target=b) for a, b in pairs if a != b]
+    edges = [GraphEdge(source=a, target=b) for a, b in sorted(edge_set)]
     return GraphResult(nodes=nodes, edges=edges, unresolved=unresolved), malformed
 
 

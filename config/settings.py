@@ -105,7 +105,13 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 _db_url = os.environ.get("DATABASE_URL", "").strip()
 if _db_url:
-    DATABASES = {"default": dj_database_url.parse(_db_url, conn_max_age=600)}
+    DATABASES = {
+        "default": dj_database_url.parse(
+            _db_url,
+            conn_max_age=600,
+            conn_health_checks=True,  # Django 4.1+: re-check stale connections cheaply
+        )
+    }
 else:
     DATABASES = {
         "default": {

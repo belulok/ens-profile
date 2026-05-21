@@ -1,7 +1,16 @@
+import json
+
+from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_http_methods
 
 from .services.avatar import normalize_avatar
 from .services.ens import ENSNotFound, get_or_resolve, is_valid_ens_name
+from .services.friendships import (
+    FriendshipError,
+    add_friendship,
+    remove_friendship,
+)
 from .services.graph import SAMPLE_PAIRS, build_graph
 
 
@@ -62,7 +71,9 @@ def graph(request):
 
     if request.method == "POST":
         raw_pairs = request.POST.get("pairs", "")
-        result, malformed = build_graph(raw_pairs)
+        # Step 3: typed pairs persist as friendships; DB friendships among
+        # the visible names are merged in via build_graph's `extra_pairs`.
+        result, malformed = build_graph(raw_pairs, persist_pairs=True, merge_db_friendships=True)
         graph_data = result.to_dict()
         unresolved = result.unresolved
         node_count = len(result.nodes)
@@ -82,3 +93,35 @@ def graph(request):
             "submitted": request.method == "POST",
         },
     )
+
+
+def _no_store(response):
+    """Mark API responses as uncacheable — mutation responses must not be cached."""
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_http_methods(["POST", "DELETE"])
+def api_friendships(request):
+    """POST {a, b} → create friendship.   DELETE {a, b} → remove friendship."""
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _no_store(JsonResponse({"error": "invalid JSON"}, status=400))
+
+    a = payload.get("a")
+    b = payload.get("b")
+    if not isinstance(a, str) or not isinstance(b, str):
+        return _no_store(JsonResponse({"error": "missing 'a' or 'b'"}, status=400))
+
+    try:
+        if request.method == "POST":
+            row, created = add_friendship(a, b)
+            return _no_store(JsonResponse(
+                {"a": row.name_a, "b": row.name_b, "created": created},
+                status=201 if created else 200,
+            ))
+        deleted = remove_friendship(a, b)
+        return _no_store(JsonResponse({"deleted": deleted}))
+    except FriendshipError as exc:
+        return _no_store(JsonResponse({"error": str(exc)}, status=400))

@@ -7,8 +7,8 @@
 <section class="mb-6">
   <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Social graph</h1>
   <p class="mt-1 text-zinc-400 text-sm">
-    Paste ENS name pairs (one per line) to visualize their connections.
-    Each node is clickable and routes to its profile page.
+    Paste ENS name pairs to visualize connections. Pairs you submit are persisted as friendships.
+    Use the toolbar above the graph to add or delete edges directly.
   </p>
 </section>
 
@@ -61,12 +61,20 @@
 
   {% if node_count > 0 %}
     <div class="rounded-md border border-zinc-800 bg-zinc-950 overflow-hidden">
+      <div class="px-4 py-2 border-b border-zinc-800 flex items-center gap-1 text-sm flex-wrap">
+        <span class="text-zinc-500 text-xs mr-2">Mode:</span>
+        <button type="button" data-mode="view" class="mode-btn px-3 py-1 rounded-md text-xs">View</button>
+        <button type="button" data-mode="connect" class="mode-btn px-3 py-1 rounded-md text-xs">Add edge</button>
+        <button type="button" data-mode="delete" class="mode-btn px-3 py-1 rounded-md text-xs">Delete edge</button>
+        <span id="mode-hint" class="text-xs text-zinc-500 ml-auto"></span>
+      </div>
       <div id="cy" style="width: 100%; height: 600px;"></div>
       <div class="px-4 py-2 border-t border-zinc-800 text-xs text-zinc-500 flex items-center justify-between">
-        <span>{{ node_count }} node{{ node_count|pluralize }} · {{ edge_count }} edge{{ edge_count|pluralize }}</span>
-        <span>Click a node to open its profile · Drag to rearrange · Scroll to zoom</span>
+        <span id="graph-counts">{{ node_count }} node{{ node_count|pluralize }} · {{ edge_count }} edge{{ edge_count|pluralize }}</span>
+        <span class="text-zinc-600">Drag nodes to rearrange · Scroll to zoom</span>
       </div>
     </div>
+    <div id="toast" class="fixed bottom-6 right-6 hidden bg-zinc-900 border border-zinc-700 text-zinc-100 text-sm px-4 py-3 rounded-md shadow-lg z-50 max-w-sm"></div>
   {% else %}
     <p class="text-zinc-500 text-sm">No valid pairs found.</p>
   {% endif %}
@@ -78,6 +86,42 @@
       const graphData = JSON.parse(document.getElementById('graph-data').textContent);
       if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
 
+      // --- CSRF + fetch helpers -------------------------------------------
+      function getCookie(name) {
+        const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : null;
+      }
+      async function apiFriendship(method, a, b) {
+        const res = await fetch('/api/friendships/', {
+          method,
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken') || '',
+          },
+          body: JSON.stringify({ a, b }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+      }
+      function canonicalEdgeId(a, b) {
+        const [x, y] = [a, b].sort();
+        return x + '--' + y;
+      }
+      const toast = document.getElementById('toast');
+      let toastTimer;
+      function showToast(msg, kind) {
+        toast.textContent = msg;
+        toast.className = 'fixed bottom-6 right-6 text-sm px-4 py-3 rounded-md shadow-lg z-50 max-w-sm border ' +
+          (kind === 'error'
+            ? 'bg-red-950 border-red-800 text-red-200'
+            : 'bg-zinc-900 border-zinc-700 text-zinc-100');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.add('hidden'), 2400);
+      }
+
+      // --- Cytoscape -------------------------------------------------------
       const cy = cytoscape({
         container: document.getElementById('cy'),
         elements: [...graphData.nodes, ...graphData.edges],
@@ -85,9 +129,7 @@
         minZoom: 0.3,
         maxZoom: 3,
         style: [
-          {
-            selector: 'node',
-            style: {
+          { selector: 'node', style: {
               'label': 'data(label)',
               'background-color': '#27272a',
               'background-image': 'data(avatar)',
@@ -95,69 +137,115 @@
               'background-clip': 'node',
               'border-color': '#52525b',
               'border-width': 2,
-              'width': 48,
-              'height': 48,
+              'width': 48, 'height': 48,
               'color': '#e4e4e7',
               'font-size': 11,
               'font-family': 'Inter, system-ui, sans-serif',
-              'text-valign': 'bottom',
-              'text-margin-y': 6,
+              'text-valign': 'bottom', 'text-margin-y': 6,
               'text-background-color': '#09090b',
               'text-background-opacity': 0.85,
               'text-background-padding': 3,
               'text-background-shape': 'roundrectangle',
-            }
-          },
-          {
-            selector: 'node[?resolved]',
-            style: {
-              'border-color': '#71717a',
-            }
-          },
-          {
-            selector: 'node:selected',
-            style: {
-              'border-color': '#ffffff',
-              'border-width': 3,
-            }
-          },
-          {
-            selector: 'edge',
-            style: {
+          }},
+          { selector: 'node[?resolved]', style: { 'border-color': '#71717a' }},
+          { selector: 'node.first-pick', style: { 'border-color': '#3b82f6', 'border-width': 3 }},
+          { selector: 'edge', style: {
               'width': 1.5,
               'line-color': '#3f3f46',
               'curve-style': 'bezier',
-              'target-arrow-shape': 'none',
-            }
-          },
-          {
-            selector: 'edge:selected',
-            style: {
-              'line-color': '#a1a1aa',
-              'width': 2.5,
-            }
-          },
+          }},
+          { selector: 'edge:selected', style: { 'line-color': '#a1a1aa', 'width': 2.5 }},
         ],
       });
+      cy.ready(() => cy.fit(undefined, 40));
 
-      cy.on('tap', 'node', (evt) => {
-        const id = evt.target.data('id');
-        const resolved = evt.target.data('resolved');
-        if (resolved) {
-          window.location.href = '/' + encodeURIComponent(id) + '/';
+      // --- Mode state ------------------------------------------------------
+      const MODES = {
+        view: { hint: 'Click a node to open its profile.' },
+        connect: { hint: 'Click two nodes to create an edge between them.' },
+        delete: { hint: 'Click an edge to remove it.' },
+      };
+      let mode = 'view';
+      let firstPick = null;
+      const hintEl = document.getElementById('mode-hint');
+      const buttons = document.querySelectorAll('.mode-btn');
+
+      function setMode(next) {
+        mode = next;
+        if (firstPick) { firstPick.removeClass('first-pick'); firstPick = null; }
+        hintEl.textContent = MODES[mode].hint;
+        buttons.forEach(b => {
+          const active = b.dataset.mode === mode;
+          b.className = 'mode-btn px-3 py-1 rounded-md text-xs ' +
+            (active
+              ? 'bg-white text-zinc-950 font-medium'
+              : 'text-zinc-400 hover:text-white hover:bg-zinc-900');
+        });
+      }
+      buttons.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+      setMode('view');
+
+      // --- Counts ----------------------------------------------------------
+      const countsEl = document.getElementById('graph-counts');
+      function updateCounts() {
+        const n = cy.nodes().length;
+        const e = cy.edges().length;
+        countsEl.textContent = n + ' node' + (n === 1 ? '' : 's') + ' · ' + e + ' edge' + (e === 1 ? '' : 's');
+      }
+
+      // --- Interactions ---------------------------------------------------
+      cy.on('tap', 'node', async (evt) => {
+        const node = evt.target;
+        const id = node.data('id');
+
+        if (mode === 'view') {
+          if (node.data('resolved')) {
+            window.location.href = '/' + encodeURIComponent(id) + '/';
+          }
+          return;
+        }
+        if (mode === 'connect') {
+          if (!firstPick) {
+            firstPick = node;
+            node.addClass('first-pick');
+          } else if (firstPick.id() === id) {
+            firstPick.removeClass('first-pick');
+            firstPick = null;
+          } else {
+            const a = firstPick.id();
+            const b = id;
+            firstPick.removeClass('first-pick');
+            firstPick = null;
+            try {
+              const result = await apiFriendship('POST', a, b);
+              const edgeId = canonicalEdgeId(a, b);
+              if (!cy.getElementById(edgeId).length) {
+                cy.add({ group: 'edges', data: { id: edgeId, source: a, target: b }});
+                updateCounts();
+              }
+              showToast(result.created ? 'Edge added' : 'Edge already exists');
+            } catch (err) {
+              showToast('Add failed: ' + err.message, 'error');
+            }
+          }
         }
       });
 
-      cy.on('mouseover', 'node', (evt) => {
-        evt.target.style('border-color', '#ffffff');
+      cy.on('tap', 'edge', async (evt) => {
+        if (mode !== 'delete') return;
+        const edge = evt.target;
+        const a = edge.data('source');
+        const b = edge.data('target');
+        if (!confirm('Delete edge between ' + a + ' and ' + b + '?')) return;
+        try {
+          await apiFriendship('DELETE', a, b);
+          cy.remove(edge);
+          updateCounts();
+          showToast('Edge removed');
+        } catch (err) {
+          showToast('Delete failed: ' + err.message, 'error');
+        }
       });
-      cy.on('mouseout', 'node', (evt) => {
-        const resolved = evt.target.data('resolved');
-        evt.target.removeStyle('border-color');
-      });
-
-      // Fit the graph nicely
-      cy.ready(() => cy.fit(undefined, 40));
     })();
   </script>
 {% endif %}
