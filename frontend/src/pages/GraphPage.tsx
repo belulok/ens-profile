@@ -275,24 +275,16 @@ export default function GraphPage() {
     [firstPick, textureLoader],
   );
 
-  // Force tuning: spread small graphs without flinging them out of view.
-  // Camera framing happens in onEngineStop (below) so the camera lands on
-  // the *settled* positions, not a mid-explosion snapshot.
-  useEffect(() => {
-    if (!graphData || !fgRef.current) return;
-    const fg = fgRef.current;
-    fg.d3Force("link")?.distance(45);
-    fg.d3Force("charge")?.strength(-120);
-    fg.d3ReheatSimulation();
-  }, [graphData]);
-
+  // Frame the camera on the settled layout. Doing it here (rather than at a
+  // fixed-time setTimeout) avoids the camera locking onto a mid-simulation
+  // snapshot. Guarded so we only zoom once per graph load.
   const hasFramedRef = useRef(false);
   useEffect(() => { hasFramedRef.current = false; }, [graphData]);
 
   const handleEngineStop = useCallback(() => {
     if (!fgRef.current || hasFramedRef.current) return;
     hasFramedRef.current = true;
-    fgRef.current.zoomToFit(800, 35);
+    fgRef.current.zoomToFit(800, 40);
   }, []);
 
   const modeHint = {
