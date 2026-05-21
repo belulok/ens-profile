@@ -1,0 +1,39 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="markGrad" x1="0.5" y1="0.18" x2="0.5" y2="0.82" gradientUnits="objectBoundingBox">
+      <stop stop-color="#ffffff"/>
+      <stop offset="0.405" stop-color="#878787"/>
+      <stop offset="0.81" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="titleGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#71717a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" rx="48" ry="48" fill="#000000"/>
+
+  <!-- Mark, top-left -->
+  <g transform="translate(72, 84) scale(0.18)">
+    <path d="M115 830.282C257.106 948.412 865.277 1741.65 1117.12 680.78C1368.97 -380.092 1453.16 983.641 1189.46 904.783C822.516 447.659 623.405 534.182 276.941 1218.79L115 830.282Z" fill="url(#markGrad)"/>
+  </g>
+
+  <!-- Title -->
+  <text x="72" y="380" font-family="Inter, system-ui, sans-serif" font-size="92" font-weight="700" fill="url(#titleGrad)" letter-spacing="-2">
+    ENS<tspan fill="#71717a">.</tspan>Profiles
+  </text>
+
+  <!-- Tagline -->
+  <text x="72" y="450" font-family="Inter, system-ui, sans-serif" font-size="32" font-weight="400" fill="#a1a1aa">
+    Resolve any <tspan font-family="ui-monospace, Menlo, monospace" font-style="italic">.eth</tspan> name. Visualize the social graph in 3D.
+  </text>
+  <text x="72" y="495" font-family="Inter, system-ui, sans-serif" font-size="32" font-weight="400" fill="#a1a1aa">
+    Edit edges; friendships persist on chain-adjacent storage.
+  </text>
+
+  <!-- URL pill, bottom-left -->
+  <rect x="72" y="540" width="285" height="46" rx="23" fill="#1f1f23" stroke="#3f3f46" stroke-width="1"/>
+  <text x="92" y="572" font-family="ui-monospace, Menlo, monospace" font-size="22" fill="#e4e4e7">
+    sebastian.hackathn.xyz
+  </text>
+</svg>
