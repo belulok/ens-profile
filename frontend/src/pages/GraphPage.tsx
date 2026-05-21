@@ -247,7 +247,7 @@ export default function GraphPage() {
         emissive: new THREE.Color(firstPick === n.id ? 0x3b82f6 : 0x000000),
         emissiveIntensity: firstPick === n.id ? 0.45 : 0,
       });
-      const sphere = new THREE.Mesh(new THREE.SphereGeometry(3.5, 32, 32), sphereMat);
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(5, 32, 32), sphereMat);
       group.add(sphere);
 
       const haloMat = new THREE.MeshBasicMaterial({
@@ -256,7 +256,7 @@ export default function GraphPage() {
         opacity: 0.16,
         side: THREE.BackSide,
       });
-      const halo = new THREE.Mesh(new THREE.SphereGeometry(4.4, 24, 24), haloMat);
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(6.2, 24, 24), haloMat);
       group.add(halo);
 
       const label = new SpriteText(n.label);
@@ -266,8 +266,8 @@ export default function GraphPage() {
       label.borderRadius = 2;
       label.fontFace = "Inter, system-ui, sans-serif";
       label.fontWeight = "500";
-      label.textHeight = 1.8;
-      label.position.set(0, 5.5, 0);
+      label.textHeight = 2.4;
+      label.position.set(0, 8, 0);
       group.add(label);
 
       return group;
@@ -275,15 +275,19 @@ export default function GraphPage() {
     [firstPick, textureLoader],
   );
 
-  // Cinematic camera intro: pan from far to graph
+  // Cinematic camera intro + force tuning so nodes actually spread out.
+  // d3-force defaults cluster small graphs uncomfortably tight; bump the
+  // link distance and node repulsion so a 4-node graph fills the frame.
   useEffect(() => {
     if (!graphData || !fgRef.current) return;
     const fg = fgRef.current;
-    // Start far away, then zoom to fit
+
+    fg.d3Force("link")?.distance(70);
+    fg.d3Force("charge")?.strength(-260);
+    fg.d3ReheatSimulation();
+
     fg.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 0);
-    const t = setTimeout(() => {
-      fg.zoomToFit(1400, 80);
-    }, 50);
+    const t = setTimeout(() => fg.zoomToFit(1400, 20), 80);
     return () => clearTimeout(t);
   }, [graphData]);
 
